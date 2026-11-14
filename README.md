@@ -1,3 +1,22 @@
+<p align="center">
+  <img src="assets/meerkat.svg" alt="Pixel-art meerkat standing sentry on a sand mound, looking through binoculars" width="280">
+</p>
+
+<p align="center">
+  <a href="https://github.com/khkstudios/meerkat/releases"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-c9a46c"></a>
+  <a href="https://github.com/khkstudios/meerkat"><img alt="Git" src="https://img.shields.io/badge/Git-F05032?logo=git&logoColor=white"></a>
+  <a href="https://github.com/khkstudios/meerkat/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/khkstudios/meerkat"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green"></a>
+  <br>
+  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/Python-3.14-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://opencv.org/"><img alt="OpenCV 5.0" src="https://img.shields.io/badge/OpenCV-5.0-5C3EE8?logo=opencv&logoColor=white"></a>
+  <a href="https://onnx.ai/"><img alt="ONNX models: YuNet + SFace" src="https://img.shields.io/badge/ONNX-YuNet%20%2B%20SFace-005CED?logo=onnx&logoColor=white"></a>
+  <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker"><img alt="MediaPipe hand tracking" src="https://img.shields.io/badge/MediaPipe-hand%20tracking-0097A7"></a>
+  <a href="https://numpy.org/"><img alt="NumPy 2.x" src="https://img.shields.io/badge/NumPy-2.x-013243?logo=numpy&logoColor=white"></a>
+  <a href="https://developer.apple.com/av-foundation/"><img alt="macOS AVFoundation" src="https://img.shields.io/badge/macOS-AVFoundation-000000?logo=apple&logoColor=white"></a>
+  <a href="https://pip.pypa.io/"><img alt="pip + venv" src="https://img.shields.io/badge/pip-venv-3775A9?logo=pypi&logoColor=white"></a>
+</p>
+
 # meerkat
 
 Webcam face recognition for one enrolled person, with tracking, a live confidence
