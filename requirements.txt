@@ -1,0 +1,7 @@
+opencv-contrib-python>=4.8   # contrib, not opencv-python: mediapipe pulls in contrib and the two clash
+numpy>=1.24
+mediapipe>=0.10              # hand tracking (gestures)
+pyobjc-framework-AVFoundation; sys_platform == "darwin"   # pick the laptop camera by name
+# optional
+# onnxruntime>=1.17   # AuraFace backend
+# matplotlib>=3.8     # eval plots
