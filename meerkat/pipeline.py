@@ -11,6 +11,7 @@ from .config import Calibration, Thresholds, TrackerConfig
 from .detect import Detector
 from .distance import DistanceEstimator
 from .gallery import Gallery, nearest_band, pose_label
+from .liveness import Liveness
 from .overlay import confidence
 from .tracker import Track, Tracker
 
@@ -36,6 +37,7 @@ class Pipeline:
         self.adaptive = adaptive
         self.adaptive_cap = adaptive_cap
         self.stats = SessionStats()
+        self.liveness = Liveness() if self.tracker.cfg.liveness != "off" else None
 
     def _match(self, e: np.ndarray) -> float:
         return self.gallery.match(e, self.match_mode) if self.gallery is not None else 0.0
@@ -49,6 +51,9 @@ class Pipeline:
                 continue
             emb, _crop = self.embedder(frame, tr.det)
             tr.last_emb = emb
+            if self.liveness is not None:  # before observe(): the lock gate reads live_state
+                res = self.liveness(frame, tr.det)
+                tr.update_liveness(None if res is None else res.logit_diff)
             tr.observe(emb, self._match(emb), self._match, self.th)
             tr.update_distance(self.dist.estimate(tr.det.width_px, tr.det.eye_px, tr.det.yaw_hint()), t)
 

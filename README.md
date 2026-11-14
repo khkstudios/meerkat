@@ -33,11 +33,25 @@ frame -> YuNet -> Kalman/IoU tracker -> 5-pt align -> SFace|AuraFace -> gallery 
 ## Setup
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/fetch_models.py              # YuNet 2026may (+2023mar fallback), SFace
-# optional: pip install onnxruntime && python scripts/fetch_models.py --auraface
+python3 -m venv .venv && source .venv/bin/activate     # Python 3.12, 3.13 or 3.14
+pip install -e .                    # installs the `meerkat` command
+meerkat fetch-models                # detector, recogniser, liveness, hands; SHA-256 verified
+# optional: pip install -e ".[auraface]" && meerkat fetch-models --auraface
+#           pip install -e ".[eval]"     (plots for `meerkat report --plot`)
 ```
+
+`python -m meerkat ...` works the same as `meerkat ...`. Outside a repo checkout, models and
+data live in `~/.meerkat` (override with `MEERKAT_HOME`).
+
+**Platforms.** CI runs the tests on Ubuntu and macOS (Apple Silicon) with Python 3.12–3.14.
+MediaPipe has no wheel for Intel macs, so gestures need Apple Silicon, Linux or Windows.
+A few conveniences are macOS-only, and other systems fall back gracefully:
+
+| Feature | macOS | Elsewhere |
+|---|---|---|
+| `--source builtin` picks the laptop camera by device type | AVFoundation (pyobjc) | camera index 0; use `--source N` |
+| Countdown and throw sounds | system sounds via `afplay` | terminal bell |
+| Gallery encryption key | login Keychain | OS keyring (Secret Service / Credential Locker), or `MEERKAT_GALLERY_KEY` |
 
 On macOS, the first camera use asks for camera permission for your terminal app.
 
@@ -51,16 +65,16 @@ whether each delivers live frames.
 
 ```bash
 # 1. Distance calibration: stand at a measured distance and look at the camera
-python -m meerkat calibrate --distance 1.0
+meerkat calibrate --distance 1.0
 
 # 2. Enrol: guided capture at 0.5/1/2/3/4 m, turning your head while it captures.
 #    SPACE starts an 8 s countdown (with ticks) so you can walk to your spot. Capture only starts
 #    once you're steady inside the band's distance range, and a chime marks each finished band.
-python -m meerkat enrol --name Keegan             # --countdown 12 for more walking time
+meerkat enrol --name Keegan             # --countdown 12 for more walking time
 
 # 3. Live
-python -m meerkat run                       # q quits, r resets the max-distance HUD
-python -m meerkat run --events events.jsonl --adaptive
+meerkat run                       # close the window to quit
+meerkat run --events events.jsonl --adaptive
 ```
 
 Every screen is hands-free. Calibrate, enrol and the distance sweep start their own countdowns
@@ -77,14 +91,24 @@ numbers:
   on a locked track. This is the real recognition range.
 - **max tracked (locked)**: how far the tracker kept your identity after recognition stopped.
 
-`python -m meerkat gallery info | delete` inspects or wipes your enrolled data.
+**Liveness (anti-spoofing).** A printed photo or a phone or monitor showing your face can't
+lock. Each track is checked by MiniFASNetV2, and a face that matches only locks once it has
+averaged "real" over 5 judged frames. A spoof detected later breaks the lock (label `SPOOF?`,
+event `spoof_detected`). It only judges faces at least 64 px wide (about 2.5 m at 720p) and
+near-frontal, and it works on texture, so a very dark room can make real faces read as
+spoofs. Use `--liveness warn` (shown, not enforced) or `--liveness off` there. 3D masks are
+not covered. The model's weights were trained on CelebA-Spoof, which is licensed for
+non-commercial research only.
+
+`meerkat gallery info | delete | encrypt` inspects, securely deletes or encrypts your enrolled
+data, and `meerkat forget` deletes everything (see Privacy).
 
 ## Gestures
 
 ```bash
-python -m meerkat gestures                  # hand-tracked canvas
-python -m meerkat gestures --owner-only     # only while face recognition has you LOCKED
-python -m meerkat gestures --events -       # JSON events (shape_drawn, item_moved, ...) for dassie-50m
+meerkat gestures                  # hand-tracked canvas
+meerkat gestures --owner-only     # only while face recognition has you LOCKED (and live)
+meerkat gestures --events -       # JSON events (shape_drawn, item_moved, ...) for dassie-50m
 ```
 
 Hand tracking uses MediaPipe HandLandmarker (Apache 2.0, 21 landmarks per hand, up to two hands).
@@ -126,10 +150,10 @@ No keyboard is needed. Optional shortcuts: `m` 2D/3D, `u` undo, `c` clear, `s` s
 ## Measuring range
 
 ```bash
-python -m eval.distance_sweep --label me --steps 0.5,1,1.5,2,3,4,5,6,7  # tape marks on the floor
-python -m eval.distance_sweep --label not_me --continuous              # other people, phone photos of you
-python -m eval.report eval/results/*.csv --far 0.01 --plot eval/results/sweep.png
-python -m eval.report eval/results/*.csv --far 0.01 --calibrate        # write thresholds
+meerkat sweep --label me --steps 0.5,1,1.5,2,3,4,5,6,7  # tape marks on the floor
+meerkat sweep --label not_me --continuous              # other people, phone photos of you
+meerkat report eval/results/*.csv --far 0.01 --plot eval/results/sweep.png
+meerkat report eval/results/*.csv --far 0.01 --calibrate        # write thresholds
 ```
 
 The report prints detection rate, median face px, similarity and recognition rate per step,
@@ -153,28 +177,46 @@ To compare setups, repeat with `--backend auraface` and `--width 1280 --height 7
 | `meerkat/shapes.py` | stroke → shape recognition, canvas items (hit-test, move, scale, rotate) |
 | `meerkat/solids.py` | 3D solids from 2D shapes, trackball rotation, shaded renderer |
 | `meerkat/gestures.py` | gesture canvas: interaction state machine, rendering, events |
+| `meerkat/liveness.py` | MiniFASNetV2 anti-spoofing: crop, preprocessing, real/spoof logit |
+| `meerkat/secure.py` | gallery encryption (Fernet, key in the OS keychain), private writes, secure delete |
+| `meerkat/fetch.py` | model downloads pinned by SHA-256 (`meerkat fetch-models`) |
 | `meerkat/config.py` | thresholds per backend, tracker tunables; overrides in `data/calibration.json` |
-| `eval/` | distance sweep logger and report / threshold calibration |
+| `meerkat/evaluation/` | distance sweep logger and report / threshold calibration (`meerkat sweep`, `meerkat report`) |
 
 Events (emitted on change only): `entered`, `recognised`, `lost_recognition_but_tracked`,
-`recognition_regained`, `released`, `approaching`, `receding`, `left_frame`.
+`recognition_regained`, `released`, `spoof_detected`, `approaching`, `receding`, `left_frame`.
 
 ```json
 {"t": 1794673500.82, "track_id": 1, "identity": "keegan", "state": "locked", "similarity": 0.58,
- "confidence": 0.91, "distance_m": 2.4, "face_px": 61, "event": "receding"}
+ "confidence": 0.91, "distance_m": 2.4, "face_px": 61, "liveness": "real", "event": "receding"}
 ```
 
 ## Tests
 
 ```bash
-python -m unittest discover tests     # tracker, lock state machine, distance, confidence ramp
+python -m unittest discover tests     # 61 tests: tracker, lock + liveness gate, distance,
+                                      # gestures, solids, encryption, forget
 ```
+
+GitHub Actions runs them on every push (`.github/workflows/tests.yml`): Ubuntu and macOS with
+Python 3.12, 3.13 and 3.14.
 
 Hardware-dependent features such as the enrolment countdown and chimes need manual checks.
 See [TESTING.md](TESTING.md).
 
 ## Privacy
 
-`data/` (galleries, calibration) and `models/` are gitignored. Only embeddings are stored,
-never images, and faces of unknown people are never persisted. The gallery is **not yet
-encrypted at rest**. Do that before any use beyond a personal experiment. See RESEARCH.md §11 (POPIA).
+Under POPIA, face embeddings are special personal information (RESEARCH.md §11).
+
+- **Embeddings only.** No face images are stored, and faces of unknown people are never persisted.
+- **Encrypted at rest.** Galleries are `data/gallery_<backend>.npz.enc`, encrypted with Fernet
+  (AES-128 + HMAC-SHA256), written with owner-only permissions (0600). The key lives in the
+  macOS login Keychain (service `meerkat`), never in the project folder. For headless use, set
+  `MEERKAT_GALLERY_KEY` (generate one with `meerkat gallery newkey`). Plaintext galleries from
+  older versions are encrypted on first load, and the plaintext copy is overwritten and deleted.
+- **Delete my data.** `meerkat forget` lists, then securely deletes, every gallery and backup,
+  the distance calibration, the evaluation logs and the keychain key (`--all` also removes saved
+  gesture canvases). Secure deletion overwrites before unlinking. That's best effort on SSDs
+  and APFS snapshots, which is why the data is encrypted in the first place.
+- **Out of git.** `data/`, `models/` and `eval/results/` are gitignored. For a Hugging Face
+  upload, list files explicitly rather than relying on `.gitignore`.

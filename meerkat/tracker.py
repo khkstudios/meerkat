@@ -81,6 +81,10 @@ class Track:
     below_count: int = 0
     recognised_now: bool = False       # per-frame sim >= match threshold
     recognition_lost: bool = False     # locked but per-frame recognition has failed for a while
+    # liveness (anti-spoofing): "unchecked" until enough frames were judged, then "real" / "spoof"
+    live_ema: float | None = None
+    live_n: int = 0
+    live_state: str = "unchecked"
     # distance
     distance_m: float | None = None
     dist_hist: deque = field(default_factory=lambda: deque(maxlen=30))
@@ -93,6 +97,20 @@ class Track:
     @property
     def face_px(self) -> float:
         return self.det.width_px if self.det is not None else self.last_width
+
+    def update_liveness(self, logit_diff: float | None) -> None:
+        """Feed one frame's real-minus-spoof logit (None = face too small/turned to judge)."""
+        c = self.cfg
+        if logit_diff is None:
+            return
+        self.live_ema = logit_diff if self.live_ema is None else (
+            c.live_alpha * logit_diff + (1 - c.live_alpha) * self.live_ema)
+        self.live_n += 1
+        if self.live_n >= c.live_frames:
+            self.live_state = "real" if self.live_ema >= c.live_threshold else "spoof"
+
+    def _live_ok(self) -> bool:
+        return self.cfg.liveness != "require" or self.live_state == "real"
 
     @property
     def state(self) -> str:
@@ -122,9 +140,13 @@ class Track:
             self.recognition_lost = self.locked and self.below_count >= c.lost_recog_frames
             return
 
+        if self.locked and c.liveness == "require" and self.live_state == "spoof":
+            self.locked, self.hi_count = False, 0  # a photo / screen was detected: drop the lock
+            self.embeds.clear()
         if not self.locked:
             self.hi_count = self.hi_count + 1 if self.fused_sim >= th.lock_high else 0
-            if self.hi_count >= c.lock_frames:
+            # with liveness required, a matching face waits as "candidate" until judged real
+            if self.hi_count >= c.lock_frames and self._live_ok():
                 self.locked, self.lo_count = True, 0
         else:
             self.lo_count = self.lo_count + 1 if self.fused_sim < th.lock_low else 0

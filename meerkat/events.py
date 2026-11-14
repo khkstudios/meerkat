@@ -35,7 +35,7 @@ class EventBus:
             "similarity": None if t.sim is None else round(t.sim, 3),
             "confidence": round(conf, 3),
             "distance_m": None if t.distance_m is None else round(t.distance_m, 2),
-            "face_px": int(t.face_px), "event": event,
+            "face_px": int(t.face_px), "liveness": t.live_state, "event": event,
         }
         self.out.write(json.dumps(rec) + "\n")
 
@@ -58,9 +58,12 @@ class EventBus:
                     self._emit(t, "lost_recognition_but_tracked", c)
                 if t.locked and prev["lost"] and not t.recognition_lost:
                     self._emit(t, "recognition_regained", c)
+                if t.live_state == "spoof" and prev["live"] != "spoof":
+                    self._emit(t, "spoof_detected", c)
                 if t.motion != prev["motion"] and t.motion in ("approaching", "receding"):
                     self._emit(t, t.motion, c)
-            self._prev[t.id] = {"locked": t.locked, "lost": t.recognition_lost, "motion": t.motion}
+            self._prev[t.id] = {"locked": t.locked, "lost": t.recognition_lost, "motion": t.motion,
+                                "live": t.live_state}
         for t in removed:
             if self._prev.pop(t.id, None) is not None:
                 self._emit(t, "left_frame", conf_fn(t))

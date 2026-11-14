@@ -4,7 +4,8 @@
     python -m meerkat enrol --name Keegan           # guided capture across distance bands
     python -m meerkat run                           # live recognition + tracking + HUD
     python -m meerkat gestures [--owner-only]       # draw shapes / move items with your hands
-    python -m meerkat gallery info | delete
+    python -m meerkat gallery info | delete | encrypt
+    python -m meerkat forget                        # delete all your data and the key
     python -m eval.distance_sweep --label me        # measure recognition vs distance
 """
 from __future__ import annotations
@@ -19,7 +20,9 @@ import numpy as np
 
 from .align_embed import Embedder
 from .capture import Capture, list_cameras, probe_cameras
-from .config import CALIBRATION_FILE, Calibration, gallery_path
+from .config import (CALIBRATION_FILE, DATA_DIR, RESULTS_DIR, Calibration, TrackerConfig, gallery_path,
+                     legacy_gallery_path)
+from .secure import delete_key, new_key, secure_delete
 from .detect import Detection, Detector
 from .distance import DistanceEstimator, solve_k
 from .events import EventBus
@@ -28,6 +31,12 @@ from .overlay import draw_banner, draw_big, draw_hud, draw_track
 from .pipeline import Pipeline
 
 WIN = "meerkat"
+
+
+def add_liveness_arg(p: argparse.ArgumentParser, default: str = "require") -> None:
+    p.add_argument("--liveness", default=default, choices=["require", "warn", "off"],
+                   help="anti-spoofing: 'require' = photos/screens can't lock (default), "
+                        "'warn' = shown but not enforced (e.g. a very dim room), 'off' = not run")
 
 
 def add_source_args(p: argparse.ArgumentParser) -> None:
@@ -178,10 +187,11 @@ def cmd_calibrate(a) -> int:
 def cmd_enrol(a) -> int:
     path = gallery_path(a.backend)
     emb = Embedder(a.backend)
-    if path.exists() and not (a.append or a.overwrite):
-        print(f"{path} exists. Use --append to add to it or --overwrite to replace it.")
+    if Gallery.exists(a.backend) and not (a.append or a.overwrite):
+        print(f"A {a.backend} gallery exists. Use --append to add to it or --overwrite to replace it.")
         return 1
-    g = Gallery.load(path) if (path.exists() and a.append) else Gallery(a.name, a.backend, emb.backend.dim)
+    g = (Gallery.open(a.backend) if (Gallery.exists(a.backend) and a.append)
+         else Gallery(a.name, a.backend, emb.backend.dim))
     cap, det = open_capture(a), Detector()
     dist = DistanceEstimator(Calibration.load().distance, cap.width)
     if not dist.calibrated:
@@ -271,22 +281,25 @@ def cmd_enrol(a) -> int:
     if len(g) == 0:
         print("Nothing captured; gallery not saved.")
         return 1
-    g.save(path)
-    print(f"Saved {path}\n{g.summary()}")
+    g.save(path)  # encrypted
+    if legacy_gallery_path(a.backend).exists():  # --overwrite of a pre-encryption gallery
+        secure_delete(legacy_gallery_path(a.backend))
+    print(f"Saved {path} (encrypted)\n{g.summary()}")
     return 0
 
 
 # ---------------------------------------------------------------- run
 def cmd_run(a) -> int:
     path = gallery_path(a.backend)
-    if not path.exists():
+    if not Gallery.exists(a.backend):
         print(f"No gallery at {path}. Run: python -m meerkat enrol --name <you> --backend {a.backend}")
         return 1
-    g = Gallery.load(path)
+    g = Gallery.open(a.backend)
     print(f"[gallery] {g.summary()}", file=sys.stderr)
     calib = Calibration.load()
     cap = open_capture(a)
-    pipe = Pipeline(g, Embedder(a.backend), calib, cap.width, match_mode=a.match, adaptive=a.adaptive)
+    pipe = Pipeline(g, Embedder(a.backend), calib, cap.width, TrackerConfig(liveness=a.liveness),
+                    match_mode=a.match, adaptive=a.adaptive)
     bus = EventBus(g.name, None if a.events == "none" else a.events)
     if not pipe.dist.calibrated:
         print("[distance] uncalibrated (using 65 deg HFOV guess). Run: python -m meerkat calibrate",
@@ -353,19 +366,78 @@ def cmd_cameras(a) -> int:
 
 # ---------------------------------------------------------------- gallery
 def cmd_gallery(a) -> int:
-    path = gallery_path(a.backend)
-    if not path.exists():
-        print(f"No gallery at {path}")
+    if a.action == "newkey":  # for headless use: export MEERKAT_GALLERY_KEY=<this>
+        print(new_key())
+        return 0
+    if a.action == "encrypt":  # encrypt every plaintext gallery file, including old backups
+        found = sorted(DATA_DIR.glob("gallery_*.npz"))
+        for f in found:
+            g = Gallery.load(f)
+            out = f.with_name(f.name + ".enc")
+            g.save(out)
+            if Gallery.load(out).emb.shape != g.emb.shape:
+                print(f"verification failed for {out}; left {f.name} in place")
+                return 1
+            secure_delete(f)
+            print(f"encrypted {f.name} -> {out.name}; plaintext securely deleted")
+        if not found:
+            print("No plaintext galleries found.")
+        return 0
+    if not Gallery.exists(a.backend):
+        print(f"No {a.backend} gallery.")
         return 1
     if a.action == "info":
-        print(Gallery.load(path).summary())
+        print(Gallery.open(a.backend).summary())
     elif a.action == "delete":
-        path.unlink()
-        print(f"Deleted {path}")
+        for f in (gallery_path(a.backend), legacy_gallery_path(a.backend)):
+            if secure_delete(f):
+                print(f"Securely deleted {f}")
     return 0
 
 
+# ---------------------------------------------------------------- forget
+def forget_targets(include_all: bool = False) -> list:
+    """Everything meerkat stores about you: face embeddings (all backends, backups), distance
+    calibration (your face width) and evaluation logs (per-frame similarity / face size)."""
+    files = sorted(DATA_DIR.glob("gallery_*"))
+    files += [CALIBRATION_FILE] if CALIBRATION_FILE.exists() else []
+    files += sorted(RESULTS_DIR.glob("*")) if RESULTS_DIR.exists() else []
+    if include_all:  # drawings from the gesture canvas aren't personal, so only on request
+        files += sorted(DATA_DIR.glob("canvas_*"))
+    return [f for f in files if f.is_file()]
+
+
+def cmd_forget(a) -> int:
+    files = forget_targets(a.all)
+    print("meerkat will securely delete:")
+    for f in files:
+        print(f"  {f}")
+    print("  + the gallery encryption key in the OS keychain")
+    if not files:
+        print("  (no files found)")
+    if not a.yes:
+        if input("Type 'forget' to confirm: ").strip() != "forget":
+            print("Cancelled; nothing deleted.")
+            return 1
+    n = sum(secure_delete(f) for f in files)
+    key = delete_key()
+    print(f"Deleted {n} file(s){' and the keychain key' if key else ''}. "
+          "Event logs written with --events <file> are yours to delete; meerkat doesn't track them.")
+    return 0
+
+
+PASSTHROUGH = {"fetch-models": "meerkat.fetch", "sweep": "meerkat.evaluation.distance_sweep",
+               "report": "meerkat.evaluation.report"}
+PASSTHROUGH_HELP = {"fetch-models": "download the model weights (SHA-256 verified)",
+                    "sweep": "distance sweep: log similarity vs distance",
+                    "report": "summarise sweeps, calibrate thresholds"}
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in PASSTHROUGH:  # these own their arguments, including --help
+        import importlib
+        return importlib.import_module(PASSTHROUGH[argv[0]]).main(argv[1:])
     ap = argparse.ArgumentParser(prog="meerkat", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -403,12 +475,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--adaptive", action="store_true", help="grow gallery in thin distance bands")
     p.add_argument("--events", default="-", help="'-' stdout, a file path, or 'none'")
     p.add_argument("--headless", action="store_true")
+    add_liveness_arg(p)
     p.set_defaults(fn=cmd_run)
 
     p = sub.add_parser("gestures", help="hand-tracked canvas: draw shapes, move items")
     add_source_args(p)
     p.add_argument("--owner-only", action="store_true",
                    help="only accept gestures while face recognition has the enrolled person locked")
+    add_liveness_arg(p)
     p.add_argument("--events", default="none", help="'-' stdout, a file path, or 'none'")
     p.add_argument("--reach", type=float, default=0.1,
                    help="camera margin mapped off-canvas: the middle (1 - 2*reach) of the view "
@@ -418,10 +492,21 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("cameras", help="list camera indexes and whether they deliver live frames")
     p.set_defaults(fn=cmd_cameras)
 
-    p = sub.add_parser("gallery", help="inspect or delete enrolled data")
-    p.add_argument("action", choices=["info", "delete"])
+    p = sub.add_parser("gallery", help="inspect, delete or encrypt enrolled data")
+    p.add_argument("action", choices=["info", "delete", "encrypt", "newkey"],
+                   help="info | delete (secure) | encrypt (migrate plaintext files) | "
+                        "newkey (print a key for MEERKAT_GALLERY_KEY)")
     p.add_argument("--backend", default="sface", choices=["sface", "auraface"])
     p.set_defaults(fn=cmd_gallery)
+
+    # passthrough commands: dispatched in main() before argparse, listed here for --help
+    for name, helptext in PASSTHROUGH_HELP.items():
+        sub.add_parser(name, help=helptext)
+
+    p = sub.add_parser("forget", help="delete my data: embeddings, calibration, eval logs, key")
+    p.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    p.add_argument("--all", action="store_true", help="also delete saved gesture canvases")
+    p.set_defaults(fn=cmd_forget)
 
     a = ap.parse_args(argv)
     return a.fn(a)

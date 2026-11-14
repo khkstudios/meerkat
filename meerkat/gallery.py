@@ -4,6 +4,8 @@ Only embeddings are stored (no images). The file lives in data/ and is gitignore
 """
 from __future__ import annotations
 
+import io
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +13,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .config import DISTANCE_BANDS
+from . import secure
+from .config import DISTANCE_BANDS, gallery_path, legacy_gallery_path
 from .detect import Detection
 
 
@@ -86,20 +89,48 @@ class Gallery:
         return float(sims.max())
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(exist_ok=True)
-        np.savez(path, emb=self.emb, band=self.band, face_px=self.face_px,
+        """Paths ending in .enc are encrypted (the default gallery_path); others are plaintext."""
+        buf = io.BytesIO()
+        np.savez(buf, emb=self.emb, band=self.band, face_px=self.face_px,
                  pose=np.array(self.pose, dtype="U8"), name=self.name, backend=self.backend,
                  created=self.created)
+        data = buf.getvalue()
+        secure.write_private(path, secure.encrypt(data) if path.suffix == ".enc" else data)
         self.dirty = False
 
     @classmethod
     def load(cls, path: Path) -> "Gallery":
-        z = np.load(path, allow_pickle=False)
+        raw = path.read_bytes()
+        if path.suffix == ".enc":
+            raw = secure.decrypt(raw)
+        z = np.load(io.BytesIO(raw), allow_pickle=False)
         g = cls(str(z["name"]), str(z["backend"]), int(z["emb"].shape[1]))
         g.emb, g.band, g.face_px = z["emb"], z["band"], z["face_px"]
         g.pose = [str(p) for p in z["pose"]]
         g.created = float(z["created"])
         return g
+
+    @staticmethod
+    def exists(backend: str) -> bool:
+        return gallery_path(backend).exists() or legacy_gallery_path(backend).exists()
+
+    @classmethod
+    def open(cls, backend: str) -> "Gallery":
+        """Load the encrypted gallery; a plaintext one from before encryption is migrated (encrypted,
+        then the plaintext file is overwritten and deleted)."""
+        enc, legacy = gallery_path(backend), legacy_gallery_path(backend)
+        if enc.exists():
+            return cls.load(enc)
+        if legacy.exists():
+            g = cls.load(legacy)
+            g.save(enc)
+            if cls.load(enc).emb.shape != g.emb.shape:  # verify before destroying the original
+                raise RuntimeError("encrypted copy didn't verify; plaintext gallery left in place")
+            secure.secure_delete(legacy)
+            print(f"[gallery] encrypted {legacy.name} -> {enc.name} and securely deleted the "
+                  "plaintext copy", file=sys.stderr)
+            return g
+        raise FileNotFoundError(f"No gallery at {enc}. Run: python -m meerkat enrol --backend {backend}")
 
     def summary(self) -> str:
         counts = ", ".join(f"{b:g}m:{n}" for b, n in self.band_counts().items())

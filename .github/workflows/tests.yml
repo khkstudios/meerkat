@@ -1,0 +1,50 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.12", "3.13", "3.14"]
+    env:
+      # encryption tests use a throwaway key from the environment, never a real keychain
+      MEERKAT_HOME: ${{ github.workspace }}/.ci-home
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: System libraries for OpenCV (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+
+      - name: Install
+        run: python -m pip install -e .
+
+      - name: Fetch the liveness model (so its test runs too)
+        run: |
+          mkdir -p "$MEERKAT_HOME/models"
+          curl -sSfL -o "$MEERKAT_HOME/models/antispoof_minifasv2_98.20.onnx" \
+            https://raw.githubusercontent.com/facenox/face-antispoof-onnx/main/models/best/98.20/best_model.onnx
+          echo "af2381b88f38769222ed93379e12444e2a50814575de1c46170de570c55a42b6  $MEERKAT_HOME/models/antispoof_minifasv2_98.20.onnx" | shasum -a 256 -c
+
+      - name: Unit tests
+        run: python -m unittest discover -v tests
+
+      - name: CLI smoke test
+        run: |
+          meerkat --help
+          meerkat report --help
+          meerkat sweep --help

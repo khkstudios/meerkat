@@ -106,6 +106,23 @@ lost), still moving at ≥ 40% of that when let go, and heading for an edge it w
 - [ ] Lower tracking confidence (0.3) keeps edge-on hands tracked without ghost hands appearing.
 - [ ] `--owner-only` face check (now its own ~5 Hz thread) doesn't slow the hands.
 
+## Liveness, encryption and packaging (added 2026-11-14)
+
+**Verified so far:**
+
+- Unit tests (61 in total) cover the lock gate (a photo can't lock, a later spoof breaks a lock, warn mode doesn't block, unjudged faces stay unchecked), the crop and preprocessing, the real model loading and returning finite logits, the encryption round trip (ciphertext, 0600 permissions, wrong key refused), migration of a plaintext gallery, secure delete overwriting before unlinking, and which files `forget` targets.
+- Your real galleries (main + backup) were encrypted with `meerkat gallery encrypt`. The key is in the login Keychain, the files are 0600, the plaintext copies were overwritten and deleted, and the gallery still loads with all 175 embeddings.
+- `pip install -e .` installs the `meerkat` command, and `fetch-models` verifies every file's SHA-256.
+- Python 3.12 / 3.13: see the results below (fresh installs, full test suite).
+
+**Not yet verified:**
+
+- [ ] **Liveness on your real face.** A headless 4 s camera check returned near-black frames (brightness 6/255, no face found), so it couldn't judge. In normal light, `meerkat run` should show `live` next to your name and lock as before. If it shows `SPOOF?` on your real face (likely in a dim room), use `--liveness warn` and tell me: the threshold (`live_threshold`) may need tuning for this camera.
+- [ ] **Liveness against real attacks:** a printed photo, and your face on a phone and on a monitor. Each should show `SPOOF?` and never lock. Record with `meerkat sweep --label not_me` to log `live` / `live_logit` per frame.
+- [ ] macOS may ask for the keychain password the first time `meerkat` reads the key from a new terminal app; choose "Always Allow".
+- [ ] `meerkat forget` end to end (it's destructive: back up first if you want to keep your gallery).
+- [ ] GitHub Actions: the workflow runs on the first push. Ubuntu needs `libgl1`, which the workflow installs; this hasn't been run yet.
+
 ## Other untested paths
 
 - [ ] Distance band enforcement during enrol (amber box, "step back / come closer").

@@ -523,14 +523,14 @@ def run(a, open_capture, draw_hud, draw_banner, show, QUIT) -> int:
     owner_thread = None
     if a.owner_only:
         from .align_embed import Embedder
-        from .config import Calibration, gallery_path
+        from .config import Calibration, TrackerConfig
         from .gallery import Gallery
         from .pipeline import Pipeline
-        gp = gallery_path(a.backend)
-        if not gp.exists():
-            print(f"--owner-only needs an enrolled gallery ({gp}).")
+        if not Gallery.exists(a.backend):
+            print("--owner-only needs an enrolled gallery: python -m meerkat enrol")
             return 1
-        owner = Pipeline(Gallery.load(gp), Embedder(a.backend), Calibration.load(), cap.width)
+        owner = Pipeline(Gallery.open(a.backend), Embedder(a.backend), Calibration.load(), cap.width,
+                         TrackerConfig(liveness=a.liveness))
         owner_state["locked"] = False
 
         def owner_loop():  # face check at ~5 Hz on its own thread: never stalls the hands

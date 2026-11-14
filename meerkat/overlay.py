@@ -55,6 +55,12 @@ def draw_track(img: np.ndarray, t: Track, name: str, th: Thresholds) -> None:
     parts = [f"{who} {conf * 100:.0f}%", dist]
     if t.locked:
         parts.append("LOCKED" if t.state == "locked" else "TRACKED")
+    if t.live_state == "spoof":
+        parts.append("SPOOF?")       # photo / screen suspected: cannot lock while required
+    elif t.live_state == "real":
+        parts.append("live")
+    elif t.cfg.liveness != "off" and not t.locked and t.hi_count > 0:
+        parts.append("checking liveness")
     _text(img, " | ".join(parts), (x, max(y - 8, 18)), colour=(255, 255, 255), bg=col)
     if t.sim is not None:
         _text(img, f"sim {t.sim:.3f}  fused {t.fused_sim or 0:.3f}  {t.face_px:.0f}px  #{t.id}",

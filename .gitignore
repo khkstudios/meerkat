@@ -6,3 +6,8 @@ models/*
 data/*
 !data/.gitkeep
 eval/results/
+*.egg-info/
+build/
+dist/
+.ci-home/
+*.tmp

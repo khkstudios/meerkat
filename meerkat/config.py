@@ -7,17 +7,32 @@ your camera and your lighting (written to data/calibration.json).
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _home() -> Path:
+    """Where models/ and data/ live: $MEERKAT_HOME, else the repo checkout when running from one,
+    else ~/.meerkat (an installed package must not write into site-packages)."""
+    if os.environ.get("MEERKAT_HOME"):
+        return Path(os.environ["MEERKAT_HOME"]).expanduser().resolve()
+    repo = Path(__file__).resolve().parent.parent
+    if (repo / "pyproject.toml").exists():
+        return repo
+    return Path.home() / ".meerkat"
+
+
+ROOT = _home()
 MODELS_DIR = ROOT / "models"
 DATA_DIR = ROOT / "data"
+RESULTS_DIR = ROOT / "eval" / "results"
 CALIBRATION_FILE = DATA_DIR / "calibration.json"
 
 YUNET_CANDIDATES = ["face_detection_yunet_2026may.onnx", "face_detection_yunet_2023mar.onnx"]
 SFACE_MODEL = "face_recognition_sface_2021dec.onnx"
 AURAFACE_MODEL = "auraface_glintr100.onnx"
+LIVENESS_MODEL = "antispoof_minifasv2_98.20.onnx"
 
 DISTANCE_BANDS = [0.5, 1.0, 2.0, 3.0, 4.0, 5.0]
 
@@ -49,6 +64,12 @@ class TrackerConfig:
     release_frames: int = 15       # M judgeable frames below T_low to release
     min_judge_px: int = 60         # face width below which we do not trust a "no"
     lost_recog_frames: int = 8     # consecutive sub-threshold frames -> lost_recognition event
+    # liveness: "require" = a track can only lock once it has averaged "real" (photos and screens
+    # can't lock); "warn" = judged and shown but not enforced; "off" = not run
+    liveness: str = "require"
+    live_frames: int = 5           # judged frames before a real/spoof verdict
+    live_alpha: float = 0.3        # EMA of the real-minus-spoof logit
+    live_threshold: float = 0.0    # logit diff; 0 = the model's p(real) 0.5. Raise for stricter
 
 
 @dataclass
@@ -96,4 +117,10 @@ def yunet_path() -> Path:
 
 
 def gallery_path(backend: str) -> Path:
+    """Encrypted gallery (see meerkat/secure.py)."""
+    return DATA_DIR / f"gallery_{backend}.npz.enc"
+
+
+def legacy_gallery_path(backend: str) -> Path:
+    """Plaintext gallery from before encryption; migrated on first load."""
     return DATA_DIR / f"gallery_{backend}.npz"

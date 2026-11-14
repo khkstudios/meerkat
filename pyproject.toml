@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meerkat"
+version = "0.1.0"
+description = "Webcam face recognition for one enrolled person, with tracking, liveness, distance measurement and hand gestures"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "khkstudios" }]
+# Tested on CPython 3.12, 3.13 and 3.14 (macOS arm64 locally; Ubuntu and macOS in CI).
+requires-python = ">=3.12"
+dependencies = [
+    # contrib, not opencv-python: mediapipe depends on contrib, and the two clash (same cv2 module)
+    "opencv-contrib-python>=4.10",
+    "numpy>=1.26",
+    "mediapipe>=0.10.14",
+    "cryptography>=42",
+    "keyring>=24",
+    # pick the laptop camera by name instead of a shifting index (macOS only)
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+
+[project.optional-dependencies]
+auraface = ["onnxruntime>=1.17"]   # 512-d recognition backend
+eval = ["matplotlib>=3.8"]         # sweep plots
+
+[project.scripts]
+meerkat = "meerkat.app:main"
+
+[project.urls]
+Repository = "https://github.com/khkstudios/meerkat"
+
+[tool.setuptools.packages.find]
+include = ["meerkat", "meerkat.*"]

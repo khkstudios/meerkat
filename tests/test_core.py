@@ -19,11 +19,13 @@ def det(x, y, w, score=0.95):
     return Detection(box, lm, score, np.zeros(15, np.float32))
 
 
-def feed(tracker, d, sim):
+def feed(tracker, d, sim, live=3.0):
+    """One frame: detection d with similarity sim and liveness logit `live` (None = not judged)."""
     tr = tracker.step([d] if d is not None else [])
     for t in tr:
         if t.det is not None:
             e = np.ones(4, np.float32) / 2
+            t.update_liveness(live)
             t.observe(e, sim, lambda _: sim, TH)
     return tr
 
@@ -77,6 +79,47 @@ class TestTracker(unittest.TestCase):
         self.assertEqual(len(tk.tracks), 0)
         self.assertEqual(len(removed), 1)
         self.assertEqual(removed[0].face_px, 100)
+
+
+class TestLivenessGate(unittest.TestCase):
+    def test_photo_cannot_lock(self):
+        tk = Tracker(TrackerConfig())
+        for _ in range(30):
+            t = feed(tk, det(500, 300, 200), 0.8, live=-2.0)[0]   # perfect match, but a spoof
+        self.assertFalse(t.locked)
+        self.assertEqual(t.live_state, "spoof")
+
+    def test_real_face_locks_after_liveness_verdict(self):
+        cfg = TrackerConfig()
+        tk = Tracker(cfg)
+        states = []
+        for _ in range(cfg.live_frames + 2):
+            t = feed(tk, det(500, 300, 200), 0.8, live=2.0)[0]
+            states.append(t.locked)
+        self.assertFalse(states[cfg.live_frames - 2])  # waits for the verdict...
+        self.assertTrue(states[-1])                    # ...then locks
+
+    def test_spoof_breaks_existing_lock(self):
+        tk = Tracker(TrackerConfig())
+        for _ in range(10):
+            t = feed(tk, det(500, 300, 200), 0.8, live=2.0)[0]
+        self.assertTrue(t.locked)
+        for _ in range(15):  # e.g. a phone screen swapped in front of the camera on the same track
+            t = feed(tk, det(500, 300, 200), 0.8, live=-4.0)[0]
+        self.assertFalse(t.locked)
+
+    def test_warn_mode_does_not_block(self):
+        tk = Tracker(TrackerConfig(liveness="warn"))
+        for _ in range(10):
+            t = feed(tk, det(500, 300, 200), 0.8, live=-2.0)[0]
+        self.assertTrue(t.locked)
+        self.assertEqual(t.live_state, "spoof")  # still reported
+
+    def test_unjudged_frames_leave_state_alone(self):
+        tk = Tracker(TrackerConfig())
+        for _ in range(10):
+            t = feed(tk, det(500, 300, 40), 0.8, live=None)[0]  # too small to judge
+        self.assertEqual((t.live_state, t.live_n), ("unchecked", 0))
 
 
 class TestDistance(unittest.TestCase):
